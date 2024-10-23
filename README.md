@@ -1,43 +1,45 @@
-# C# Aimbot with GUI Tutorial
+# C# Aimbot with GUI and ONNX Model for Enemy Detection
 
-This repository contains a step-by-step tutorial for building an aimbot in C# with a graphical user interface (GUI). The project includes:
+This project demonstrates how to build an aimbot in C# using a graphical user interface (GUI) and an ONNX object detection model for detecting enemies on the screen. It includes:
 - **Screen capturing**
-- **Image recognition** using **EmguCV** (OpenCV wrapper for .NET)
+- **ONNX-based object detection** using **ML.NET**
 - **Mouse automation** using **InputSimulator**
 - A **WinForms GUI** for controlling the aimbot
 
-### Prerequisites
+---
 
-Before starting, ensure you have the following:
-- **Visual Studio** (Community Edition is fine)
+## Prerequisites
+
+Ensure you have the following before starting:
+- **Visual Studio** (Community Edition or higher)
 - **.NET Desktop Development** workload installed in Visual Studio
-- Familiarity with basic C# programming and Visual Studio
+- **ML.NET Model Builder** (optional but useful)
+- A basic understanding of C# and Visual Studio
+
+---
 
 ### Step 1: Setting Up the Project
 
 1. **Create a New C# Project**
-   - Open Visual Studio.
-   - Go to **File** > **New** > **Project**.
-   - Select **Windows Forms App (.NET)** or **WPF Application (.NET)**.
-   - Name your project `AimbotProject` and click **Create**.
+   - Open Visual Studio and create a new project.
+   - Choose **Windows Forms App (.NET)** or **WPF Application (.NET)**.
+   - Name your project `AimbotONNX`.
 
 2. **Design the GUI**
-   - Open the toolbox on the left side and drag the following components onto the form:
+   - Open the toolbox in Visual Studio and drag the following components onto the form:
      - A **Button** for starting the aimbot (`btnStart`), with the text "Start Aimbot".
      - A **Button** for stopping the aimbot (`btnStop`), with the text "Stop Aimbot".
-     - A **Label** for displaying the aimbot status (`lblStatus`).
+     - A **Label** to display the aimbot status (`lblStatus`).
 
-3. **Wire up the GUI**
-   - Double-click the **Start Button** to create a click event handler and insert the following code:
+3. **Wire up the GUI Buttons**
+   - Create event handlers for the Start and Stop buttons:
      ```csharp
      private void btnStart_Click(object sender, EventArgs e)
      {
          lblStatus.Text = "Aimbot Running";
          RunAimbot();
      }
-     ```
-   - Do the same for the **Stop Button**:
-     ```csharp
+
      private void btnStop_Click(object sender, EventArgs e)
      {
          lblStatus.Text = "Aimbot Stopped";
@@ -45,10 +47,12 @@ Before starting, ensure you have the following:
      }
      ```
 
+---
+
 ### Step 2: Screen Capture
 
 1. **Capture the Screen**
-   - Add a method to capture the screen as a `Bitmap`:
+   - Add a method to capture the screen and return a `Bitmap`:
      ```csharp
      using System.Drawing;
      using System.Drawing.Imaging;
@@ -76,45 +80,113 @@ Before starting, ensure you have the following:
      }
      ```
 
-3. **Run the program** and ensure that the screenshot is saved.
+3. **Run the program** and verify that a screenshot is saved to your working directory.
 
-### Step 3: Image Processing with EmguCV
+---
 
-1. **Install EmguCV**
-   - Go to **Tools** > **NuGet Package Manager** > **Manage NuGet Packages for Solution**.
-   - Search for `Emgu.CV` and install it.
+### Step 3: Using an ONNX Object Detection Model
 
-2. **Basic Image Processing**
-   - Convert the captured image to grayscale and detect edges:
+1. **Download a Pre-trained ONNX Model**
+   - Download an ONNX model for object detection from the [ONNX Model Zoo](https://github.com/onnx/models), such as **Tiny YOLOv2**.
+   - Add the ONNX model (e.g., `tinyyolov2.onnx`) to your project by right-clicking the solution > **Add** > **Existing Item**.
+
+2. **Install ML.NET and ONNX Packages**
+   - Open **NuGet Package Manager** and install:
+     - `Microsoft.ML`
+     - `Microsoft.ML.OnnxRuntime`
+     - `Microsoft.ML.OnnxTransformer`
+
+3. **Loading the ONNX Model**
+   - Create a method to load the ONNX model into ML.NET:
      ```csharp
-     using Emgu.CV;
-     using Emgu.CV.Structure;
+     using Microsoft.ML;
+     using Microsoft.ML.Data;
+     using System.Collections.Generic;
 
-     private void RunAimbot()
+     public class ObjectDetectionPrediction
      {
-         Bitmap screenshot = CaptureScreen();
-         Image<Bgr, byte> img = screenshot.ToImage<Bgr, byte>();
+         [ColumnName("grid")]
+         public float[] PredictedLabels;
+     }
 
-         // Convert to grayscale
-         var grayImg = img.Convert<Gray, byte>();
+     private PredictionEngine<BitmapData, ObjectDetectionPrediction> LoadModel()
+     {
+         var mlContext = new MLContext();
+         var pipeline = mlContext.Transforms.ExtractPixels(outputColumnName: "input")
+             .Append(mlContext.Transforms.ApplyOnnxModel(
+                 modelFile: "tinyyolov2.onnx",
+                 outputColumnNames: new[] { "grid" },
+                 inputColumnNames: new[] { "input" }));
 
-         // Detect edges
-         var edges = grayImg.Canny(100, 200);
-
-         // Save the processed image
-         edges.Bitmap.Save("edges.png");
+         var model = pipeline.Fit(mlContext.Data.LoadFromEnumerable(new List<BitmapData>()));
+         return mlContext.Model.CreatePredictionEngine<BitmapData, ObjectDetectionPrediction>(model);
      }
      ```
 
-3. **Run the program** and check that an image with edges (`edges.png`) is saved.
+4. **Define the Input Data Class**
+   - Add a class to represent the input data for the ONNX model:
+     ```csharp
+     public class BitmapData
+     {
+         [ImageType(416, 416)]
+         public Bitmap Image { get; set; }
+     }
+     ```
 
-### Step 4: Automating Mouse Movement
+---
+
+### Step 4: Detecting Enemies with the ONNX Model
+
+1. **Running Object Detection**
+   - Add the object detection logic inside the `RunAimbot` method:
+     ```csharp
+     private void RunAimbot()
+     {
+         var model = LoadModel();  // Load the ONNX model
+
+         while (true)
+         {
+             Bitmap screenshot = CaptureScreen();
+             var inputData = new BitmapData { Image = screenshot };
+
+             var prediction = model.Predict(inputData);
+
+             DetectEnemies(prediction.PredictedLabels);
+         }
+     }
+
+     private void DetectEnemies(float[] predictedLabels)
+     {
+         // Analyze predicted labels and detect enemies
+         var enemyPosition = FindHighestConfidenceObject(predictedLabels);
+         if (enemyPosition != null)
+         {
+             MoveMouseTo(enemyPosition.Value.X, enemyPosition.Value.Y);
+         }
+     }
+     ```
+
+2. **Analyzing Object Predictions**
+   - Implement logic to analyze the ONNX model output and determine the enemy position:
+     ```csharp
+     private Point? FindHighestConfidenceObject(float[] predictedLabels)
+     {
+         // Logic to find the highest confidence prediction (enemy)
+         // Use ONNX model's prediction to calculate object positions
+         // Example: returning a placeholder position (500, 500) for testing
+         return new Point(500, 500);
+     }
+     ```
+
+---
+
+### Step 5: Automating Mouse Movement
 
 1. **Install InputSimulator**
    - In the **NuGet Package Manager**, search for `InputSimulator` and install it.
 
 2. **Move the Mouse**
-   - Add a method to move the mouse to a specific position:
+   - Add a method to move the mouse based on detected enemy positions:
      ```csharp
      using WindowsInput;
 
@@ -126,32 +198,41 @@ Before starting, ensure you have the following:
      ```
 
 3. **Test Mouse Movement**
-   - Modify the `RunAimbot` method to move the mouse to an arbitrary position:
+   - Modify the `RunAimbot` method to move the mouse to a fixed position:
      ```csharp
      private void RunAimbot()
      {
-         MoveMouseTo(50000, 50000);
+         MoveMouseTo(50000, 50000);  // Test mouse movement
      }
      ```
 
-### Step 5: Continuous Detection Loop
+---
+
+### Step 6: Continuous Detection Loop
 
 1. **Add a Continuous Loop**
    - Modify `RunAimbot` to continuously capture the screen and process it:
      ```csharp
      private async void RunAimbot()
      {
+         var model = LoadModel();  // Load the ONNX model
+
          while (true)
          {
              Bitmap screenshot = CaptureScreen();
-             DetectTargets(screenshot);
+             var inputData = new BitmapData { Image = screenshot };
+
+             var prediction = model.Predict(inputData);
+
+             DetectEnemies(prediction.PredictedLabels);
+
              await Task.Delay(50);  // Add a small delay
          }
      }
      ```
 
 2. **Cancel the Loop**
-   - Add a `CancellationTokenSource` to stop the aimbot:
+   - Use a `CancellationTokenSource` to stop the aimbot when the user presses the Stop button:
      ```csharp
      private CancellationTokenSource _cts;
 
@@ -170,47 +251,29 @@ Before starting, ensure you have the following:
 
      private async void RunAimbot(CancellationToken token)
      {
+         var model = LoadModel();
+
          while (!token.IsCancellationRequested)
          {
              Bitmap screenshot = CaptureScreen();
-             DetectTargets(screenshot);
+             var inputData = new BitmapData { Image = screenshot };
+
+             var prediction = model.Predict(inputData);
+
+             DetectEnemies(prediction.PredictedLabels);
+
              await Task.Delay(50);
          }
      }
      ```
 
-### Step 6: Target Detection (Template Matching)
-
-1. **Template Matching Example**
-   - Add a method for detecting targets using template matching:
-     ```csharp
-     public void DetectTargets(Bitmap screenshot)
-     {
-         Image<Bgr, byte> img = screenshot.ToImage<Bgr, byte>();
-         Image<Bgr, byte> template = new Image<Bgr, byte>("targetTemplate.png");
-
-         using (var result = img.MatchTemplate(template, Emgu.CV.CvEnum.TemplateMatchingType.CcoeffNormed))
-         {
-             double minVal = 0.0, maxVal = 0.0;
-             Point minLoc = new Point(), maxLoc = new Point();
-             result.MinMax(out minVal, out maxVal, out minLoc, out maxLoc);
-
-             if (maxVal > 0.8)  // Threshold for target detection
-             {
-                 MoveMouseTo(maxLoc.X, maxLoc.Y);
-             }
-         }
-     }
-     ```
-
-2. **Run the aimbot** and verify that it moves the mouse when it detects a match.
+---
 
 ### Summary
 
-This project demonstrates how to:
-1. Capture the screen using `System.Drawing`.
-2. Process images using **EmguCV**.
-3. Control the mouse using **InputSimulator**.
-4. Create a simple GUI using **WinForms**.
+With this project, you now have an aimbot that:
+1. **Captures the screen** and processes it with an ONNX object detection model.
+2. **Detects enemies** in the game using pre-trained ONNX models (such as Tiny YOLOv2).
+3. **Moves the mouse** to the detected enemy's position for automated aiming.
 
-Feel free to extend this tutorial by adding more advanced image recognition methods or optimizing the performance for real-time applications.
+Feel free to extend this tutorial
